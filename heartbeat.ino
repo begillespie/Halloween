@@ -19,11 +19,13 @@ int SPEED = 20; // Speed of the animations in ms. 17 is 60FPS, 33 is 30FPS
 
 const float pi = 3.14; //...159265358979323846...
 // Patterns to choose from
-enum pattern {NONE, HEARTBEAT, BREATHING, FADE};
+enum pattern {NONE, HEARTBEAT, BREATHING, FADE, LIGHTNING, ELECTRICITY};
 
 uint32_t DARK_GREEN = 0x345310;
 uint32_t GREEN = 0x09A03D;
 
+unsigned long patternChange = 5000; // Time between changing patterns
+unsigned long lastPatternChange = 0;
 
 class Patterns : public Adafruit_NeoPixel
 {
@@ -44,6 +46,8 @@ class Patterns : public Adafruit_NeoPixel
     // Interval2 - stores the major interval
     // Rate      - defines the major interval
     // Amplitude - Amplitude of the sine curve
+    
+    bool Toggle;
 
     float period;
     unsigned long lastUpdate = 0;
@@ -132,7 +136,7 @@ class Patterns : public Adafruit_NeoPixel
   void Fade(uint32_t color1, uint32_t color2, int steps, int interval)
   {
     ActivePattern = FADE;
-    Interval = interval;
+    Interval = 20;
     Steps = steps;
     Color1 = color1;
     Color2 = color2;
@@ -146,6 +150,37 @@ class Patterns : public Adafruit_NeoPixel
       uint8_t blue = (Blue(Color2) - Blue(Color1)) * Index / Steps + Blue(Color1);
       setAllPixels(Color(red, green, blue));
       Increment();
+  }
+  
+  void Lightning(int interval, int time_between_strikes)
+  {
+    ActivePattern = LIGHTNING;
+    Interval = interval;
+    Interval1 = Interval;
+    Interval2 = time_between_strikes;
+    Steps = 7;
+    Index = 0;
+    Toggle = false;
+    Color1 = 0x000000;
+    Color2 = 0x9999FF;
+
+  }
+  
+  void LightningUpdate()
+  {
+    if(Index == 0){Interval = Interval1;}
+    if(Index == 4){Interval = Interval * 5;}
+    if(Index == 5){Interval = Interval1;}
+    if(Index == 7){Interval = Interval2;}
+    
+    if (Toggle){
+      setAllPixels(Color1);
+    }else{
+      setAllPixels(Color2);
+    }
+    Toggle = !Toggle;
+    
+    Increment();
   }
 
   void Increment()
@@ -172,6 +207,9 @@ class Patterns : public Adafruit_NeoPixel
           break;
         case FADE:
           FadeUpdate();
+          break;
+        case LIGHTNING:
+          LightningUpdate();
           break;
         default:
           break;
@@ -207,6 +245,7 @@ class Patterns : public Adafruit_NeoPixel
   }
 };
 
+
 // Instantiate the classes
 Patterns heart(PIXELS, HEART_PIN, TYPE);
 Patterns head(PIXELS, HEAD_PIN, TYPE);
@@ -218,12 +257,25 @@ void setup() {
 
   // Kick off a pattern
   heart.HeartBeat(HEART_RATE, HB_LENGTH);
-  head.Breathe(BREATHING_RATE, SPEED, DARK_GREEN, GREEN);
-
+//  head.Breathe(BREATHING_RATE, SPEED, DARK_GREEN, GREEN);
+  head.Lightning(60, 1000);
 
 }
 
 void loop() {
+  unsigned long currentMillis = millis();
+  
   heart.Update();
   head.Update();
+  
+  if(currentMillis - lastPatternChange >= patternChange)
+  {
+    lastPatternChange = currentMillis;
+    electricity();
+  }
+}
+
+void electricity()
+{
+  heart.Fade(0x000000, 0x5555FF, 45, 20);
 }
