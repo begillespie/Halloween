@@ -8,25 +8,19 @@
 #define TYPE NEO_GRBW
 #define PIXELS 16
 
-// Initial settings
-int HB_LENGTH = 500; // Length of the heartbeat pulses in ms
-int HEART_RATE = 85; // beats / min
-    // The maximum HR will be around 60,000/LENGTH. Any faster and the heartbeats
-    // will come faster than the pulses and you'll have to shorten the heartbeat
-    // pulse to go any faster.
-int BREATHING_RATE = 40;  // Breaths / min
 int SPEED = 20; // Speed of the animations in ms. 17 is 60FPS, 33 is 30FPS
 
 int masterIndex = 0;
 
 const float pi = 3.14; //...159265358979323846...
+
 // Patterns to choose from
 enum pattern {NONE, HEARTBEAT, BREATHING, FADE, LIGHTNING};
 
-uint32_t DARK_GREEN = 0x345310;
+uint32_t DARK_GREEN = 0x172605;
 uint32_t GREEN = 0x09A03D;
 
-unsigned long patternChange = 5 * 1000; // Time between changing patterns
+unsigned long patternChange; // Time between changing patterns
 unsigned long lastPatternChange = 0;
 
 class Patterns : public Adafruit_NeoPixel
@@ -50,8 +44,9 @@ class Patterns : public Adafruit_NeoPixel
     // Rate      - defines the major interval
     // Repeat    - stores number of times to repeat the pattern
     // Amplitude - Amplitude of the sine curve
-    
+
     bool Toggle;
+    bool Done = true;
 
     float period;
     unsigned long lastUpdate = 0;
@@ -59,8 +54,12 @@ class Patterns : public Adafruit_NeoPixel
 
   public:
 
-  Patterns(int num_pixels, int led_pin, int type):Adafruit_NeoPixel(num_pixels, led_pin, TYPE)
+  void (*OnComplete)();
+
+  Patterns(int num_pixels, int led_pin, int type, void (*callback)())
+  :Adafruit_NeoPixel(num_pixels, led_pin, TYPE)
   {
+    OnComplete = callback;
   }
 
   void HeartBeat(int rate, int hb_length)
@@ -140,12 +139,13 @@ class Patterns : public Adafruit_NeoPixel
   void Fade(uint32_t color1, uint32_t color2, int steps, int interval, int repeat)
   {
     ActivePattern = FADE;
-    Interval = 20;
+    Interval = interval;
     Steps = steps;
     Repeat = repeat;
     RepeatIndex = 0;
     Color1 = color1;
     Color2 = color2;
+    Done = false;
     Index = 0;
   }
 
@@ -155,18 +155,19 @@ class Patterns : public Adafruit_NeoPixel
     uint8_t green = (Green(Color2) - Green(Color1)) * Index / Steps + Green(Color1);
     uint8_t blue = (Blue(Color2) - Blue(Color1)) * Index / Steps + Blue(Color1);
     setAllPixels(Color(red, green, blue));
-    
+
     if(Index == Steps){
       RepeatIndex++;
     }
-    
+
     if(RepeatIndex >= Repeat){
+      Done = true;
       setAllPixels(0x000000);
       ActivePattern = NONE;
     }
       Increment();
   }
-  
+
   void Lightning(int interval, int time_between_strikes, int repeat)
   {
     ActivePattern = LIGHTNING;
@@ -178,11 +179,11 @@ class Patterns : public Adafruit_NeoPixel
     Repeat = repeat;
     RepeatIndex = 0;
     Toggle = false;
+    Done = false;
     Color1 = 0x000000;
     Color2 = 0x9999FF;
-
   }
-  
+
   void LightningUpdate()
   {
     if(Index == 0){Interval = Interval1;}
@@ -192,15 +193,16 @@ class Patterns : public Adafruit_NeoPixel
       Interval = Interval2;
       RepeatIndex++;
     }
-    
+
     if (Toggle){
       setAllPixels(Color1);
     }else{
       setAllPixels(Color2);
     }
     Toggle = !Toggle;
-    
+
     if(RepeatIndex >= Repeat){
+      Done = true;
       setAllPixels(0x000000);
       ActivePattern = NONE;
     }
@@ -208,18 +210,22 @@ class Patterns : public Adafruit_NeoPixel
   }
 
   void Increment()
+  // Step through animations; run the callback if it exists
   {
     Index++;
     if(Index > Steps)
     {
       Index = 0;
+      if(OnComplete != NULL && Done){
+        OnComplete();
+      }
     }
-
   }
 
   void Update()
   {
-    if(millis() - lastUpdate >= Interval) // Update
+    // Call this method on a loop to update animations
+    if(millis() - lastUpdate >= Interval) // Time to update
     {
       lastUpdate = millis();
       switch(ActivePattern)
@@ -241,13 +247,16 @@ class Patterns : public Adafruit_NeoPixel
       }
     }
   }
-  
-  void Stop(){
+
+  void Stop()
+  // Stop the current animation and turn everything off
+  {
     setAllPixels(0x000000);
     ActivePattern = NONE;
   }
 
   void setAllPixels(uint32_t color)
+  // Set all pixels the same color and show them.
   {
     for(int n = 0; n < PIXELS; n++)
     {
@@ -277,53 +286,77 @@ class Patterns : public Adafruit_NeoPixel
 
 
 // Instantiate the classes
-Patterns heart(PIXELS, HEART_PIN, TYPE);
-Patterns head(PIXELS, HEAD_PIN, TYPE);
-
-void imAlive()
-{
-  masterIndex++;
-  heart.Stop();
-  head.Stop();
-  delay(1000);
-  head.Lightning(60, 1000, 2);
-
-}
-
-void electricity()
-{
-  heart.Fade(0x000000, 0x5555FF, 45, 20, 6);
-}
-
+Patterns heart(PIXELS, HEART_PIN, TYPE, NULL);
+Patterns head(PIXELS, HEAD_PIN, TYPE, NULL);
 
 void setNextPattern()
+// Uses the masterIndex and timers to piece together the animations. Push
+// around the patternChange variable for timing.
 {
   switch(masterIndex)
   {
     case(0):
-      imAlive();
+      head.Stop();
+      heart.Stop();
+      patternChange = 5000;
       break;
     case(1):
-      heart.HeartBeat(25, 500);
-      head.Breathe(10, SPEED, DARK_GREEN, GREEN);
+      head.Lightning(60, 1000, 2);
+      patternChange = 500;
       break;
     case(2):
+      heart.Lightning(90, 2000, 1);
+      patternChange = 2500;
+      break;
+    case(3):
+      heart.Fade(0x000000, 0x5555FF, 45, 20, 6);
+      patternChange = 6000;
+      break;
+    case(4):
+      heart.Fade(0x000000, 0x930808, 20, 150, 1);
+      patternChange = 3100;
+      break;
+    case(5):
+      heart.HeartBeat(8, 600);
+      patternChange = 13000;
+      break;
+    case(6):
+      head.Fade(0x000000, GREEN, 50, 10, 1);
+      patternChange = 750;
+      break;
+    case(7):
+      head.Breathe(6, SPEED, DARK_GREEN, GREEN);
+      patternChange = 17000;
+      break;
+    case(8):
+      heart.HeartBeat(15, 600);
+      head.Breathe(6, SPEED, DARK_GREEN, GREEN);
+      break;
+    case(9):
+      heart.HeartBeat(25, 500);
+      head.Breathe(10, SPEED, DARK_GREEN, GREEN);
+      patternChange = 60000;
+      break;
+    case(10):
       heart.HeartBeat(55, 500);
       head.Breathe(15, SPEED, DARK_GREEN, GREEN);
       break;
-    case(3):
+    case(11):
       heart.HeartBeat(80, 400);
       head.Breathe(40, SPEED, DARK_GREEN, GREEN);
       break;
-    case(4):
+    case(12):
       heart.HeartBeat(100, 400);
       head.Breathe(80, SPEED, DARK_GREEN, GREEN);
       break;
     default:
       break;
   }
+
   masterIndex++;
-  if(masterIndex > 4){
+
+  // Restart the loop
+  if(masterIndex > 12){
     masterIndex = 0;
   }
 }
@@ -332,20 +365,17 @@ void setup() {
   // Setup the strips
   heart.begin();
   head.begin();
-  
-  imAlive();
 }
 
 void loop() {
   unsigned long currentMillis = millis();
-  
+
   heart.Update();
   head.Update();
-  
+
   if(currentMillis - lastPatternChange >= patternChange)
   {
     lastPatternChange = currentMillis;
     setNextPattern();
   }
 }
-
